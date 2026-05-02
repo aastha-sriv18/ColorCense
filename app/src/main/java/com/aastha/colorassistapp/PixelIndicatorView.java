@@ -11,7 +11,7 @@ public class PixelIndicatorView extends View {
     private int tapX = -1;
     private int tapY = -1;
     private int hexColor = Color.BLACK;
-    private String hexString = "#000000";
+    private String displayString = "#000000";
     private static final int RADIUS = 12; // 3-pixel radius = 6px diameter, scaled for visibility
     private static final int INDICATOR_SIZE = 25; // Size of indicator square
     
@@ -46,7 +46,7 @@ public class PixelIndicatorView extends View {
         invertedSquarePaint = new Paint();
         invertedSquarePaint.setStyle(Paint.Style.FILL);
 
-        // Text paint for HEX value
+        // Text paint for value
         textPaint = new Paint();
         textPaint.setColor(Color.WHITE);
         textPaint.setTextSize(28f);
@@ -62,11 +62,11 @@ public class PixelIndicatorView extends View {
         borderPaint.setStrokeWidth(2f);
     }
 
-    public void updateIndicator(int x, int y, int color, String hex) {
+    public void updateIndicator(int x, int y, int color, String displayString) {
         this.tapX = x;
         this.tapY = y;
         this.hexColor = color;
-        this.hexString = hex;
+        this.displayString = displayString;
         invalidate();
     }
 
@@ -98,7 +98,7 @@ public class PixelIndicatorView extends View {
         canvas.drawRect(squareLeft, squareTop, squareLeft + INDICATOR_SIZE, squareTop + INDICATOR_SIZE, invertedSquarePaint);
         canvas.drawRect(squareLeft, squareTop, squareLeft + INDICATOR_SIZE, squareTop + INDICATOR_SIZE, borderPaint);
 
-        // Draw HEX value text near the indicator
+        // Draw text near the indicator
         int textX = tapX;
         int textY = tapY - (INDICATOR_SIZE / 2) - 20;
         
@@ -107,6 +107,6 @@ public class PixelIndicatorView extends View {
             textY = tapY + (INDICATOR_SIZE / 2) + 40;
         }
 
-        canvas.drawText(hexString, textX, textY, textPaint);
+        canvas.drawText(displayString, textX, textY, textPaint);
     }
 }

@@ -1,6 +1,7 @@
 package com.aastha.colorassistapp.ui.home;
 
 import android.Manifest;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.net.Uri;
@@ -9,14 +10,14 @@ import android.os.Bundle;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
+import android.view.ScaleGestureDetector;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.TextView;
 import android.widget.Toast;
-import android.widget.FrameLayout;
-import android.content.Intent;
 
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.PickVisualMediaRequest;
@@ -25,8 +26,9 @@ import androidx.annotation.NonNull;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
 
-import com.aastha.colorassistapp.R;
+import com.aastha.colorassistapp.ColorNameFinder;
 import com.aastha.colorassistapp.PixelIndicatorView;
+import com.aastha.colorassistapp.R;
 
 import java.io.IOException;
 
@@ -38,14 +40,22 @@ public class HomeFragment extends Fragment {
     private TextView infoText;
     private Bitmap currentBitmap;
     private String lastHexColor;
-    private TextView headingHomeTxt;
     private ActivityResultLauncher<PickVisualMediaRequest> pickMedia;
+
+    // Zoom and Pan variables
+    private ScaleGestureDetector scaleGestureDetector;
+    private float scaleFactor = 1.0f;
+    private float lastTouchX;
+    private float lastTouchY;
+    private float posX = 0f;
+    private float posY = 0f;
+    private static final float MIN_ZOOM = 1.0f;
+    private static final float MAX_ZOOM = 8.0f;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         
-        // Initialize the photo picker launcher
         pickMedia = registerForActivityResult(new ActivityResultContracts.PickVisualMedia(), uri -> {
             if (uri != null) {
                 loadImageFromUri(uri);
@@ -67,36 +77,101 @@ public class HomeFragment extends Fragment {
         imageView = view.findViewById(R.id.image_view);
         pixelIndicator = view.findViewById(R.id.pixel_indicator);
         infoText = view.findViewById(R.id.info_text);
-        headingHomeTxt = view.findViewById(R.id.headingHomeTxt);
         Button pickImageBtn = view.findViewById(R.id.btn_pick_image);
         Button colorHexaBtn = view.findViewById(R.id.btn_colorhexa);
-        // Pick image button click listener
+
+        scaleGestureDetector = new ScaleGestureDetector(requireContext(), new ScaleListener());
+
         pickImageBtn.setOnClickListener(v -> launchPhotoPicker());
         colorHexaBtn.setOnClickListener(v -> openColorHexa());
-        // Image tap listener
-        imageView.setOnTouchListener((v, event) -> {
-            if (event.getAction() == MotionEvent.ACTION_DOWN && currentBitmap != null) {
-                handleImageTap(event);
-            }
-            return true;
-        });
+
+        View imageContainer = view.findViewById(R.id.image_container);
+        imageContainer.setOnTouchListener(this::handleTouch);
     }
+
+    private boolean handleTouch(View v, MotionEvent event) {
+        scaleGestureDetector.onTouchEvent(event);
+
+        int action = event.getActionMasked();
+        switch (action) {
+            case MotionEvent.ACTION_DOWN: {
+                lastTouchX = event.getX();
+                lastTouchY = event.getY();
+                break;
+            }
+            case MotionEvent.ACTION_MOVE: {
+                if (!scaleGestureDetector.isInProgress() && event.getPointerCount() == 1) {
+                    float x = event.getX();
+                    float y = event.getY();
+                    float dx = x - lastTouchX;
+                    float dy = y - lastTouchY;
+
+                    posX += dx;
+                    posY += dy;
+
+                    limitPan();
+                    updateTransformation();
+
+                    lastTouchX = x;
+                    lastTouchY = y;
+                }
+                break;
+            }
+            case MotionEvent.ACTION_UP: {
+                // Check if it's a tap (short duration, single finger)
+                if (event.getEventTime() - event.getDownTime() < 200 && event.getPointerCount() == 1) {
+                    handleImageTap(event);
+                }
+                break;
+            }
+        }
+        return true;
+    }
+
+    private void limitPan() {
+        float width = imageView.getWidth();
+        float height = imageView.getHeight();
+        
+        float maxTransX = (width * scaleFactor - width) / 2f;
+        float maxTransY = (height * scaleFactor - height) / 2f;
+        
+        posX = Math.max(-maxTransX, Math.min(posX, maxTransX));
+        posY = Math.max(-maxTransY, Math.min(posY, maxTransY));
+    }
+
+    private void updateTransformation() {
+        imageView.setScaleX(scaleFactor);
+        imageView.setScaleY(scaleFactor);
+        imageView.setTranslationX(posX);
+        imageView.setTranslationY(posY);
+
+        pixelIndicator.setScaleX(scaleFactor);
+        pixelIndicator.setScaleY(scaleFactor);
+        pixelIndicator.setTranslationX(posX);
+        pixelIndicator.setTranslationY(posY);
+    }
+
+    private class ScaleListener extends ScaleGestureDetector.SimpleOnScaleGestureListener {
+        @Override
+        public boolean onScale(ScaleGestureDetector detector) {
+            scaleFactor *= detector.getScaleFactor();
+            scaleFactor = Math.max(MIN_ZOOM, Math.min(scaleFactor, MAX_ZOOM));
+            
+            limitPan();
+            updateTransformation();
+            return true;
+        }
+    }
+
     private void openColorHexa() {
         if (currentBitmap == null) return;
-
-        // Get last selected color's hex (remove # for URL)
         String colorHex = lastHexColor != null ? lastHexColor.replace("#", "") : "000000";
-
         String url = "https://www.colorhexa.com/" + colorHex;
-
         Intent browserIntent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
         startActivity(browserIntent);
     }
 
-    // Add this field to store last hex color
-
     private void launchPhotoPicker() {
-        // Request READ_MEDIA_IMAGES permission for API 33+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(requireContext(), Manifest.permission.READ_MEDIA_IMAGES)
                     != PackageManager.PERMISSION_GRANTED) {
@@ -104,8 +179,6 @@ public class HomeFragment extends Fragment {
                 return;
             }
         }
-
-        // Launch photo picker
         pickMedia.launch(new PickVisualMediaRequest.Builder()
                 .setMediaType(ActivityResultContracts.PickVisualMedia.ImageOnly.INSTANCE)
                 .build());
@@ -125,14 +198,13 @@ public class HomeFragment extends Fragment {
         try {
             currentBitmap = android.provider.MediaStore.Images.Media.getBitmap(
                     requireContext().getContentResolver(), uri);
-
             imageView.setImageBitmap(currentBitmap);
-
-            // NEW: Dynamic container height to fit image perfectly
-            FrameLayout container = rootView.findViewById(R.id.image_container);
-            float aspectRatio = (float) currentBitmap.getHeight() / currentBitmap.getWidth();
-            int targetHeight = Math.min(600, (int) (imageView.getWidth() * aspectRatio)); // Max 600dp
-            container.getLayoutParams().height = targetHeight;
+            
+            // Reset zoom/pan
+            scaleFactor = 1.0f;
+            posX = 0f;
+            posY = 0f;
+            updateTransformation();
 
             pixelIndicator.clearIndicator();
             infoText.setText("Tap on the image to pick colors");
@@ -143,9 +215,6 @@ public class HomeFragment extends Fragment {
             Toast.makeText(getContext(), "Error loading image", Toast.LENGTH_SHORT).show();
         }
     }
-
-
-
 
     private void handleImageTap(MotionEvent event) {
         if (currentBitmap == null) return;
@@ -158,65 +227,57 @@ public class HomeFragment extends Fragment {
         int bitmapWidth = currentBitmap.getWidth();
         int bitmapHeight = currentBitmap.getHeight();
 
-        // Calculate ACTUAL displayed bitmap size (accounts for letterbox)
         float scale = Math.min((float) imageViewWidth / bitmapWidth, (float) imageViewHeight / bitmapHeight);
         int displayWidth = (int) (bitmapWidth * scale);
         int displayHeight = (int) (bitmapHeight * scale);
 
-        // Calculate letterbox padding
         float paddingX = (imageViewWidth - displayWidth) / 2f;
         float paddingY = (imageViewHeight - displayHeight) / 2f;
 
-        // Adjust tap coordinates for padding
-        float adjustedX = tapX - paddingX;
-        float adjustedY = tapY - paddingY;
+        // Account for transformation
+        float centerX = imageViewWidth / 2f;
+        float centerY = imageViewHeight / 2f;
+        
+        float untransformedX = (tapX - centerX - posX) / scaleFactor + centerX;
+        float untransformedY = (tapY - centerY - posY) / scaleFactor + centerY;
 
-        // Scale to bitmap coordinates
+        float adjustedX = untransformedX - paddingX;
+        float adjustedY = untransformedY - paddingY;
+
         float scaleX = (float) bitmapWidth / displayWidth;
         float scaleY = (float) bitmapHeight / displayHeight;
 
         int bitmapX = Math.round(adjustedX * scaleX);
         int bitmapY = Math.round(adjustedY * scaleY);
 
-        // Clamp to bitmap bounds
         bitmapX = Math.max(0, Math.min(bitmapX, bitmapWidth - 1));
         bitmapY = Math.max(0, Math.min(bitmapY, bitmapHeight - 1));
 
-        // Only process valid taps
-        if (tapX >= paddingX && tapX <= (imageViewWidth - paddingX) &&
-                tapY >= paddingY && tapY <= (imageViewHeight - paddingY)) {
+        if (untransformedX >= paddingX && untransformedX <= (imageViewWidth - paddingX) &&
+                untransformedY >= paddingY && untransformedY <= (imageViewHeight - paddingY)) {
 
             int averageColor = getAverageColorInRadius(bitmapX, bitmapY, 3);
             String hexColor = colorToHex(averageColor);
+            String colorDescription = ColorNameFinder.getColorName(averageColor) + " " + hexColor;
+            
             lastHexColor = hexColor;
-            // Pass RAW ImageView coordinates to overlay (perfect position)
-            pixelIndicator.updateIndicator((int) tapX, (int) tapY, averageColor, hexColor);
-            infoText.setText("Selected Color: " + hexColor);
+            
+            pixelIndicator.updateIndicator((int) untransformedX, (int) untransformedY, averageColor, colorDescription);
+            infoText.setText("Selected Color: " + colorDescription);
+            
             Button colorHexaBtn = rootView.findViewById(R.id.btn_colorhexa);
             colorHexaBtn.setVisibility(View.VISIBLE);
-            Log.d("HomeFragment", "Tap: (" + tapX + ", " + tapY + ") -> Bitmap: (" + bitmapX + ", " + bitmapY + ") = " + hexColor);
         }
     }
 
-
-
     private int getAverageColorInRadius(int centerX, int centerY, int radius) {
-        int totalRed = 0;
-        int totalGreen = 0;
-        int totalBlue = 0;
-        int pixelCount = 0;
-
-        // Sample pixels within radius
+        int totalRed = 0, totalGreen = 0, totalBlue = 0, pixelCount = 0;
         for (int x = centerX - radius; x <= centerX + radius; x++) {
             for (int y = centerY - radius; y <= centerY + radius; y++) {
-                // Check if pixel is within bitmap bounds and within circular radius
                 if (x >= 0 && x < currentBitmap.getWidth() && y >= 0 && y < currentBitmap.getHeight()) {
-                    int dx = x - centerX;
-                    int dy = y - centerY;
-                    
+                    int dx = x - centerX, dy = y - centerY;
                     if (dx * dx + dy * dy <= radius * radius) {
                         int pixel = currentBitmap.getPixel(x, y);
-                        
                         totalRed += android.graphics.Color.red(pixel);
                         totalGreen += android.graphics.Color.green(pixel);
                         totalBlue += android.graphics.Color.blue(pixel);
@@ -225,23 +286,11 @@ public class HomeFragment extends Fragment {
                 }
             }
         }
-
-        if (pixelCount == 0) {
-            return android.graphics.Color.BLACK;
-        }
-
-        int avgRed = totalRed / pixelCount;
-        int avgGreen = totalGreen / pixelCount;
-        int avgBlue = totalBlue / pixelCount;
-
-        return android.graphics.Color.rgb(avgRed, avgGreen, avgBlue);
+        if (pixelCount == 0) return android.graphics.Color.BLACK;
+        return android.graphics.Color.rgb(totalRed / pixelCount, totalGreen / pixelCount, totalBlue / pixelCount);
     }
 
     private String colorToHex(int color) {
-        int red = android.graphics.Color.red(color);
-        int green = android.graphics.Color.green(color);
-        int blue = android.graphics.Color.blue(color);
-        
-        return String.format("#%02X%02X%02X", red, green, blue);
+        return String.format("#%02x%02x%02x", android.graphics.Color.red(color), android.graphics.Color.green(color), android.graphics.Color.blue(color));
     }
 }
